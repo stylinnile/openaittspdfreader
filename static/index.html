@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF to Speech Reader</title>
+</head>
+<body>
+    <h1>PDF to Speech Reader</h1>
+    
+    <!-- Option to upload PDF -->
+    <input type="file" id="fileInput" accept="application/pdf">
+    <button id="uploadPDF">Upload and Convert PDF</button>
+
+    <textarea id="textInput" placeholder="Or enter text here to convert to speech"></textarea>
+    <button id="startTTS">Convert to Speech</button>
+
+    <!-- Audio player -->
+    <audio id="audioPlayer" controls></audio>
+
+    <!-- Chunk status -->
+    <div id="chunkStatus"></div>
+    
+    <!-- Display the text of the current chunk -->
+    <div id="currentChunkText" style="border: 1px solid #ccc; padding: 10px; margin-top: 10px;"></div>
+
+    <script>
+    let currentChunk = 0;
+    let totalChunks = 0;
+    let nextAudioUrl = null;
+    let nextChunkText = '';  // Store the text for the next chunk
+    const chunkStatus = document.getElementById('chunkStatus');
+    const currentChunkText = document.getElementById('currentChunkText');
+    const audioPlayer = document.getElementById('audioPlayer');
+        
+    document.getElementById('uploadPDF').addEventListener('click', async () => {
+        const fileInput = document.getElementById('fileInput');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Please select a PDF file to upload.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+        if (result.text) {
+            document.getElementById('textInput').value = result.text;
+        } else {
+            console.error(result.error);
+        }
+    });
+
+    // Function to request and play the first chunk
+    async function startChunk(chunkIndex) {
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: document.getElementById('textInput').value, chunk_index: chunkIndex })
+        });
+
+        const result = await response.json();
+        if (result.finished) {
+            chunkStatus.innerText = "Finished playing all chunks.";
+            return;
+        }
+
+        nextAudioUrl = result.audio_file;
+        nextChunkText = result.chunk_text;  // Store the chunk text
+        totalChunks = result.total_chunks;
+        chunkStatus.innerText = `Playing chunk ${chunkIndex + 1} of ${totalChunks}`;
+        currentChunkText.innerText = nextChunkText;  // Display current chunk text
+
+        // Play the first chunk
+        audioPlayer.src = nextAudioUrl;
+        audioPlayer.play();
+
+        // Prepare the next chunk while playing
+        prepareNextChunk(chunkIndex + 1);
+    }
+
+    // Function to prepare the next chunk in advance (one-chunk buffer)
+    async function prepareNextChunk(chunkIndex) {
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: document.getElementById('textInput').value, chunk_index: chunkIndex })
+        });
+
+        const result = await response.json();
+        if (!result.finished) {
+            nextAudioUrl = result.audio_file;
+            nextChunkText = result.chunk_text;  // Store the next chunk's text
+        }
+    }
+
+    // Event listener to handle chunk playback and requests for the next chunk
+    audioPlayer.addEventListener('ended', () => {
+        currentChunk++;
+        if (currentChunk < totalChunks && nextAudioUrl) {
+            chunkStatus.innerText = `Playing chunk ${currentChunk + 1} of ${totalChunks}`;
+            currentChunkText.innerText = nextChunkText;  // Update current chunk text
+            audioPlayer.src = nextAudioUrl;
+            audioPlayer.play();
+            prepareNextChunk(currentChunk + 1);  // Request the next chunk
+        } else {
+            chunkStatus.innerText = "Finished playing all chunks.";
+        }
+    });
+
+    // Start the TTS conversion on button click
+    document.getElementById('startTTS').addEventListener('click', () => {
+        currentChunk = 0;
+        startChunk(currentChunk);
+    });
+</script>
+</body>
+</html>
